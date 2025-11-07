@@ -12,7 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let isInitialized = false;
 
     // オーディオファイルのパス
-    const audioFiles = ['audio/kanon1.mp3', 'audio/kanon2.mp3', 'audio/kanon3.mp3']; // .oggでも可
+    const audioFiles = ['audio/kanon1.mp3', 'audio/kanon2.mp3', 'audio/3.mp3']; // .oggでも可
 
     // --- DOM要素の取得 ---
     const btnStatic = document.getElementById('btnStatic');
