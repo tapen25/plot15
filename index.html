@@ -3,201 +3,49 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>リアルタイム行動認識AI</title>
-    <!-- Tailwind CSSを読み込み -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>Web Audio API ループ切り替え</title>
     <style>
-        /* 画面のちらつき防止 */
-        body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+        /* (CSSは前回のものと同じでOK) */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 80vh;
+            background-color: #f4f4f4;
+        }
+        button {
+            font-size: 1.2rem;
+            padding: 12px 24px;
+            margin: 8px;
+            cursor: pointer;
+            border: none;
+            border-radius: 8px;
+            background-color: #007bff;
+            color: white;
+            transition: background-color 0.2s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button.active {
+            background-color: #28a745;
+        }
     </style>
 </head>
-<body class="bg-gray-900 text-white font-sans flex items-center justify-center min-h-screen">
+<body>
 
-    <div class="container mx-auto p-8 max-w-lg text-center">
-        
-        <h1 class="text-3xl font-bold mb-6">リアルタイム行動認識</h1>
-        
-        <!-- センサー開始ボタン -->
-        <button id="startButton" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-lg text-2xl transition duration-300 shadow-lg">
-            認識を開始
-        </button>
+    <h1>状態切り替え (Web Audio APi)</h1>
+    <p>（最初のクリックで全オーディオのデコードとループ再生が開始されます）</p>
 
-        <!-- ステータス表示 -->
-        <div id="status" class="mt-6 text-xl text-gray-400 h-10">
-            ここにステータスが表示されます
-        </div>
-        
-        <!-- 結果表示エリア -->
-        <div class="mt-8 bg-gray-800 rounded-lg p-12 shadow-2xl">
-            <div class="text-3xl text-gray-400 mb-4">現在の行動</div>
-            <div id="prediction" class="text-8xl font-bold text-blue-400 h-32">
-                ---
-            </div>
-        </div>
-
+    <div>
+        <button id="btnStatic">静止 (1.mp3)</button>
+        <button id="btnWalk">歩行 (2.mp3)</button>
+        <button id="btnRun">早歩き (3.mp3)</button>
     </div>
 
-    <!-- TensorFlow.js ライブラリ -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="script.js"></script>
 
-    <script>
-        // --- 1. 定数とグローバル変数 ---
-        const startButton = document.getElementById('startButton');
-        const statusEl = document.getElementById('status');
-        const predictionEl = document.getElementById('prediction');
-
-        // モデルのパラメータ (Pythonでの学習時と合わせる)
-        const WINDOW_SIZE = 100; // 100ステップ
-        const STEP_SIZE = 50;    // 50%オーバーラップ
-
-        // 3クラス分類のラベル
-        const LABELS_MAP = {
-            0: { name: "Stay", emoji: "🧍‍♂️" },
-            1: { name: "Walk", emoji: "🚶‍♂️" },
-            2: { name: "Run", emoji: "🏃‍♂️" }
-        };
-
-        let model = null;            // ロードしたモデル
-        let dataBuffer = [];       // センサーデータをためるバッファ
-        let isPredicting = false;  // 予測中のフラグ
-        let lastAction = "";     // 最後の予測結果
-
-        // --- 2. モデルの読み込み ---
-        async function loadModel() {
-            statusEl.innerText = "AIモデルを読み込んでいます...";
-            try {
-                // ★★★ ステップ2で変換した model.json のパスを指定 ★★★
-                const modelPath = './tfjs_model/model.json';
-                model = await tf.loadLayersModel(modelPath);
-                await model.warmup(); // ウォームアップ
-                statusEl.innerText = "「認識を開始」ボタンを押してください";
-                startButton.disabled = false;
-                console.log("モデルの読み込みとウォームアップ完了");
-            } catch (e) {
-                statusEl.innerText = "モデルの読み込みに失敗しました。";
-                console.error(e);
-            }
-        }
-
-        // --- 3. センサースタート処理 ---
-        function startSensor() {
-            statusEl.innerText = "センサーの許可を待っています...";
-            
-            // iOS 13+ のためのセンサー許可リクエスト
-            if (typeof DeviceMotionEvent.requestPermission === 'function') {
-                DeviceMotionEvent.requestPermission()
-                    .then(permissionState => {
-                        if (permissionState === 'granted') {
-                            addSensorListener();
-                        } else {
-                            statusEl.innerText = "センサーの許可が得られませんでした";
-                        }
-                    })
-                    .catch((e) => {
-                        statusEl.innerText = "センサーの許可中にエラーが発生しました";
-                        console.error(e);
-                    });
-            } else {
-                // Android や iOS 13未満
-                addSensorListener();
-            }
-        }
-        
-        // センサーイベントリスナーの追加
-        function addSensorListener() {
-            statusEl.innerText = "認識中... 動いてみてください";
-            startButton.style.display = 'none'; // ボタンを非表示に
-            
-            try {
-                // 加速度センサー (重力除く)
-                // HASCデータが重力除く加速度(accel)か、重力込み(accm)か不明なため、
-                // 'acceleration' を使用します。精度が悪い場合は 'accelerationIncludingGravity' を試してください。
-                const motionSensor = new Sensor({ frequency: 20 }); // 20Hz (1秒に20回)
-                motionSensor.addEventListener('reading', () => {
-                    handleMotion(motionSensor.x, motionSensor.y, motionSensor.z);
-                });
-                motionSensor.addEventListener('error', event => {
-                   statusEl.innerText = 'センサーエラー: ' + event.error.name;
-                   console.error(event.error.name, event.error.message);
-                });
-                motionSensor.start();
-
-            } catch (e) {
-                statusEl.innerText = "センサーの初期化に失敗しました。";
-                console.error(e);
-                
-                // フォールバックとして古いAPIを試す
-                window.addEventListener('devicemotion', (event) => {
-                    if (event.acceleration) {
-                         handleMotion(event.acceleration.x, event.acceleration.y, event.acceleration.z);
-                    } else {
-                        statusEl.innerText = "加速度センサーが見つかりません。";
-                    }
-                }, true);
-            }
-        }
-
-        // --- 4. センサーデータ処理と予測 ---
-        function handleMotion(x, y, z) {
-            if (!model || isPredicting) {
-                return; // モデルが未ロード or 予測中なら何もしない
-            }
-
-            // データをバッファに追加
-            dataBuffer.push([x, y, z]);
-
-            // バッファがウィンドウサイズに達したら予測実行
-            if (dataBuffer.length >= WINDOW_SIZE) {
-                isPredicting = true; // 予測開始フラグ
-                
-                // ウィンドウサイズ分のデータを切り出す
-                const windowData = dataBuffer.slice(0, WINDOW_SIZE);
-                
-                // バッファをスライドさせる (オーバーラップ)
-                dataBuffer = dataBuffer.slice(STEP_SIZE);
-                
-                // 予測を実行
-                predict(windowData);
-            }
-        }
-
-        // --- 5. 予測の実行 ---
-        async function predict(windowData) {
-            
-            // tf.tidy() を使い、メモリリークを防ぐ
-            tf.tidy(() => {
-                // 1. データをTensorに変換
-                // (100, 3) の形状
-                const inputTensor = tf.tensor2d(windowData); 
-                
-                // 2. バッチ次元を追加 (1, 100, 3) の形状
-                const input = inputTensor.expandDims(0); 
-
-                // 3. 予測
-                const prediction = model.predict(input);
-                
-                // 4. 最も確率の高いクラスのインデックスを取得
-                const predictedIndex = prediction.argMax(1).dataSync()[0];
-                
-                // 5. 結果を表示
-                const action = LABELS_MAP[predictedIndex];
-                
-                // 前回の結果と違う場合のみ画面を更新 (ちらつき防止)
-                if (action.name !== lastAction) {
-                    predictionEl.innerHTML = `${action.name} ${action.emoji}`;
-                    lastAction = action.name;
-                }
-            });
-
-            isPredicting = false; // 予測完了フラグ
-        }
-
-
-        // --- 初期化 ---
-        startButton.addEventListener('click', startSensor);
-        startButton.disabled = true;
-        loadModel(); // ページ読み込み時にモデルのロードを開始
-
-    </script>
 </body>
 </html>
