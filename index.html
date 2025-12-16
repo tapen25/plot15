@@ -116,7 +116,7 @@ document.getElementById("start").onclick = async () => {
   
   setInterval(updateLoop, 100); 
 
-  document.getElementById("status").innerText = "振ってフィルターを開放してください";
+  document.getElementById("status").innerText = "歩いてください";
   document.getElementById("start").style.display = "none";
   document.getElementById("send-btn").style.display = "inline-block"; // 送信ボタン表示
   document.body.classList.add("active");
@@ -200,7 +200,7 @@ function mapStdToBPM(std) {
 function updateFilterAndVol(std) {
   const minFreq = 200;   
   const maxFreq = 1200;   
-  const sensitivity = 12.0; 
+  const sensitivity = 20.0; 
 
   let ratio = std / sensitivity;
   if (ratio > 1.0) ratio = 1.0;
