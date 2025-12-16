@@ -3,12 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Kick & Bass - Data Logger</title>
+<title>Data Logger (Email ver)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
 <style>
   body { font-family: sans-serif; padding: 20px; text-align: center; background: #f0f0f0; transition: background 0.5s; }
   button { padding: 15px 30px; font-size: 1.2em; cursor: pointer; border: none; background: #333; color: white; border-radius: 8px; margin: 10px; }
-  button#download-btn { background: #2196F3; display: none; } /* 青色ボタン・最初は非表示 */
+  
+  /* 送信ボタン：最初は非表示、送信中はグレーアウト */
+  button#send-btn { background: #4CAF50; display: none; } 
+  button:disabled { background: #999; cursor: not-allowed; }
+
   #status, #debug, #counter-display { margin: 15px 0; font-size: 1.2em; }
   #debug { color: #666; font-size: 0.9em; }
   #counter-display { font-weight: bold; color: #d32f2f; }
@@ -17,14 +21,15 @@
 </head>
 <body>
 
-<button id="start">Start (iOSは要タップ)</button>
-<button id="download-btn">CSV保存</button>
+<button id="start">Start</button>
+<button id="send-btn">送信</button>
 
 <div id="status">停止中</div>
-<div id="counter-display">探索行動回数: 0</div>
 <div id="debug">Wait...</div>
 
 <script>
+const GAS_URL = "https://script.google.com/macros/s/AKfycbw1uVxkUEtpqNRzMGWVe5tiNazvukRsBmp0rMIcBMphGG6e-GUP48stL1CgVy9tT68/exec";
+
 // ==========================================
 // 1. シンセ定義
 // ==========================================
@@ -75,14 +80,14 @@ const kickIndices = [0, 2, 4, 8];
 const bassMap = { 0: "C3", 2: "E3", 4: "G3", 8: "C4" };
 
 // --- ★データロギング用変数 ---
-let logData = [];           // データを貯める配列
-let startTime = 0;          // 計測開始時間
-let currentStd = 0;         // 現在の標準偏差
+let logData = [];           
+let startTime = 0;          
+let currentStd = 0;         
 
 // --- ★探索行動検知用 ---
-let exploratoryActionCount = 0; // 切り替わり回数
-let isUserMoving = false;       // 現在「動いている」と判定されているか
-const MOVE_THRESHOLD = 2.0;     // 閾値（stdがこれを超えたら「動き」とみなす）
+let exploratoryActionCount = 0; 
+let isUserMoving = false;       
+const MOVE_THRESHOLD = 2.0;     
 
 function noteToFreq(note) {
   const map = {
@@ -106,19 +111,19 @@ document.getElementById("start").onclick = async () => {
   
   // 開始処理
   startTime = performance.now();
-  logData = []; // データリセット
+  logData = []; 
   exploratoryActionCount = 0;
   
-  // 100msごとにBPM更新 & データ記録を行う
   setInterval(updateLoop, 100); 
 
   document.getElementById("status").innerText = "振ってフィルターを開放してください";
   document.getElementById("start").style.display = "none";
-  document.getElementById("download-btn").style.display = "inline-block"; // 保存ボタン表示
+  document.getElementById("send-btn").style.display = "inline-block"; // 送信ボタン表示
   document.body.classList.add("active");
 };
 
-document.getElementById("download-btn").onclick = downloadCSV;
+// 送信ボタンクリック時の処理を変更
+document.getElementById("send-btn").onclick = sendCSVToGmail;
 
 // ==========================================
 // 計算・制御
@@ -144,7 +149,7 @@ function handleMotion(e) {
   motionHistory = motionHistory.filter(item => now - item.time < HISTORY_DURATION);
 
   const stats = computeMeanStd(motionHistory.map(item => item.val));
-  currentStd = stats.std; // グローバル変数に保持
+  currentStd = stats.std; 
   
   const cleanIntensity = currentStd < 0.8 ? 0 : currentStd;
 
@@ -156,34 +161,25 @@ function handleMotion(e) {
   }
 }
 
-// --- ★メインループ: BPM更新 + 状態検知 + ロギング (100ms毎) ---
 function updateLoop() {
   if (!isPlaying) return;
 
-  // 1. BPMを滑らかに追従
   const diff = targetBPM - currentBPM;
   const step = diff * 0.02; 
   currentBPM += step;
 
-  // 2. 探索的行動の検知（静止 ⇔ 動作 のスイッチ判定）
-  //    現在のstdが閾値を超えているかチェック
   const nowMoving = currentStd > MOVE_THRESHOLD;
 
   if (nowMoving !== isUserMoving) {
-    // 状態が変化した！（静止→動、または 動→静止）
     exploratoryActionCount++;
     isUserMoving = nowMoving;
-    
-    // UI更新
     document.getElementById("counter-display").innerText = 
       `探索行動回数: ${exploratoryActionCount}`;
   }
 
-  // 3. 画面デバッグ表示
   document.getElementById("debug").innerText =
     `Target: ${Math.floor(targetBPM)} / Cur: ${Math.floor(currentBPM)} / Std: ${currentStd.toFixed(2)}`;
 
-  // 4. データ記録 (CSV用)
   const timeSec = ((performance.now() - startTime) / 1000).toFixed(3);
   logData.push({
     time: timeSec,
@@ -226,37 +222,57 @@ function updateFilterAndVol(std) {
   }
   bassSynth.volume.rampTo(bassVol, RAMP_TIME);
 }
-
 // ==========================================
-// CSV出力機能
+// Gmail送信機能 (GAS連携)
 // ==========================================
-function downloadCSV() {
+function sendCSVToGmail() {
   if (logData.length === 0) {
     alert("データがありません。Startしてしばらく動いてください。");
     return;
   }
+  // URLが設定されていない場合のアラート
+  if (GAS_URL.includes("xxxxxxxxxxxxxxxxx")) {
+    alert("スクリプト内のGAS_URLを正しく設定してください。");
+    return;
+  }
+  // ボタンを無効化（連打防止）
+  const btn = document.getElementById("send-btn");
+  btn.disabled = true;
+  btn.innerText = "送信中...";
 
-  // CSVヘッダー
-  let csvContent = "data:text/csv;charset=utf-8,";
-  csvContent += "Time(sec),STD(Intensity),BPM,IsMoving(0/1),ExploratoryCount_Cumulative\n";
-
-  // データ行
+  // CSV文字列の作成
+  let csvContent = "Time(sec),STD(Intensity),BPM,IsMoving(0/1),ExploratoryCount_Cumulative\n";
   logData.forEach(row => {
     csvContent += `${row.time},${row.std},${row.bpm},${row.isMoving},${row.switchCount}\n`;
   });
 
-  // ダウンロード処理
-  const encodedUri = encodeURI(csvContent);
-  const link = document.createElement("a");
-  link.setAttribute("href", encodedUri);
-  link.setAttribute("download", "motion_data_experiment.csv");
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  // GASへPOST送信
+  fetch(GAS_URL, {
+    method: 'POST',
+    // CORSエラー回避のため text/plain でJSON文字列を送る手法をとります
+    body: JSON.stringify({ csvData: csvContent })
+  })
+  .then(response => {
+    // GASからの戻り値はCORSの関係で直接読めない場合が多いですが、
+    // ここに来れば一応リクエストは飛んでいます。
+    alert("データを送信しました！Gmailを確認してください。");
+    btn.innerText = "送信完了";
+    // 3秒後にボタンを戻す
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.innerText = "Gmailに送信";
+    }, 3000);
+  })
+  .catch(error => {
+    console.error('Error:', error);
+    alert("送信に失敗しました。");
+    btn.disabled = false;
+    btn.innerText = "Gmailに送信";
+  });
 }
 
 // ==========================================
-// シーケンス制御（変更なし）
+// シーケンス制御
 // ==========================================
 function startSequence() {
   isPlaying = true;
