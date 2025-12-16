@@ -200,7 +200,7 @@ function mapStdToBPM(std) {
 function updateFilterAndVol(std) {
   const minFreq = 200;   
   const maxFreq = 1200;   
-  const sensitivity = 20.0; 
+  const sensitivity = 15.0; 
 
   let ratio = std / sensitivity;
   if (ratio > 1.0) ratio = 1.0;
