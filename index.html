@@ -3,13 +3,17 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Data Logger (Email ver)</title>
+<title>Data Logger (ID ver)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
 <style>
   body { font-family: sans-serif; padding: 20px; text-align: center; background: #f0f0f0; transition: background 0.5s; }
+  
+  /* 入力欄のスタイル */
+  input[type="text"] { padding: 10px; font-size: 1.2em; width: 200px; text-align: center; border-radius: 5px; border: 1px solid #ccc; margin-bottom: 10px; }
+  
   button { padding: 15px 30px; font-size: 1.2em; cursor: pointer; border: none; background: #333; color: white; border-radius: 8px; margin: 10px; }
   
-  /* 送信ボタン：最初は非表示、送信中はグレーアウト */
+  /* 送信ボタン：最初は非表示 */
   button#send-btn { background: #4CAF50; display: none; } 
   button:disabled { background: #999; cursor: not-allowed; }
 
@@ -21,6 +25,10 @@
 </head>
 <body>
 
+<div>
+  <input type="text" id="subject-id" placeholder="被験者ID">
+</div>
+
 <button id="start">Start</button>
 <button id="send-btn">送信</button>
 
@@ -31,7 +39,7 @@
 const GAS_URL = "https://script.google.com/macros/s/AKfycbxGAOkqkvLAykyJbOldYCZ2qeAh-RpO5i9Mxd0qpktd6pP1246Zu7S4XwJit3KAUSU/exec";
 
 // ==========================================
-// 1. シンセ定義
+// 1. シンセ定義 (変更なし)
 // ==========================================
 const globalFilter = new Tone.Filter({
   type: "lowpass",
@@ -79,12 +87,10 @@ const durations = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 1.0];
 const kickIndices = [0, 2, 4, 8]; 
 const bassMap = { 0: "C3", 2: "E3", 4: "G3", 8: "C4" };
 
-// --- ★データロギング用変数 ---
 let logData = [];           
 let startTime = 0;          
 let currentStd = 0;         
 
-// --- ★探索行動検知用 ---
 let exploratoryActionCount = 0; 
 let isUserMoving = false;       
 const MOVE_THRESHOLD = 2.0;     
@@ -100,6 +106,16 @@ function noteToFreq(note) {
 }
 
 document.getElementById("start").onclick = async () => {
+  // ★追加: ID入力チェック
+  const subjectIdInput = document.getElementById("subject-id");
+  const subjectId = subjectIdInput.value.trim();
+  if (!subjectId) {
+    alert("被験者IDを入力してください！");
+    return;
+  }
+  // ★追加: 入力欄をロック（途中変更防止）
+  subjectIdInput.disabled = true;
+
   if (typeof DeviceMotionEvent.requestPermission === 'function') {
     try {
       const permissionState = await DeviceMotionEvent.requestPermission();
@@ -109,24 +125,22 @@ document.getElementById("start").onclick = async () => {
   await Tone.start();
   window.addEventListener("devicemotion", handleMotion);
   
-  // 開始処理
   startTime = performance.now();
   logData = []; 
   exploratoryActionCount = 0;
   
   setInterval(updateLoop, 100); 
 
-  document.getElementById("status").innerText = "歩いてください";
+  document.getElementById("status").innerText = "歩いてください (ID: " + subjectId + ")";
   document.getElementById("start").style.display = "none";
-  document.getElementById("send-btn").style.display = "inline-block"; // 送信ボタン表示
+  document.getElementById("send-btn").style.display = "inline-block"; 
   document.body.classList.add("active");
 };
 
-// 送信ボタンクリック時の処理を変更
 document.getElementById("send-btn").onclick = sendCSVToGmail;
 
 // ==========================================
-// 計算・制御
+// 計算・制御 (変更なし)
 // ==========================================
 
 function computeMeanStd(arr) {
@@ -222,42 +236,46 @@ function updateFilterAndVol(std) {
   }
   bassSynth.volume.rampTo(bassVol, RAMP_TIME);
 }
+
 // ==========================================
-// Gmail送信機能 (GAS連携)
+// Gmail送信機能 (GAS連携) ★修正あり
 // ==========================================
 function sendCSVToGmail() {
   if (logData.length === 0) {
-    alert("データがありません。Startしてしばらく動いてください。");
+    alert("データがありません。");
     return;
   }
-  // URLが設定されていない場合のアラート
+  // ★追加: IDの取得
+  const subjectId = document.getElementById("subject-id").value.trim() || "NoID";
+
   if (GAS_URL.includes("xxxxxxxxxxxxxxxxx")) {
-    alert("スクリプト内のGAS_URLを正しく設定してください。");
+    alert("GAS_URLを設定してください");
     return;
   }
-  // ボタンを無効化（連打防止）
+  
   const btn = document.getElementById("send-btn");
   btn.disabled = true;
   btn.innerText = "送信中...";
 
-  // CSV文字列の作成
   let csvContent = "Time(sec),STD(Intensity),BPM,IsMoving(0/1),ExploratoryCount_Cumulative\n";
   logData.forEach(row => {
     csvContent += `${row.time},${row.std},${row.bpm},${row.isMoving},${row.switchCount}\n`;
   });
 
-  // GASへPOST送信
+  // ★変更: ファイル名を動的に生成して送信パラメータに追加
+  const dynamicFileName = `Data_${subjectId}_${new Date().toISOString().slice(0,10)}.csv`;
+
   fetch(GAS_URL, {
     method: 'POST',
-    // CORSエラー回避のため text/plain でJSON文字列を送る手法をとります
-    body: JSON.stringify({ csvData: csvContent })
+    body: JSON.stringify({ 
+      csvData: csvContent,
+      fileName: dynamicFileName, // GAS側でこれを受け取る必要があります
+      subjectId: subjectId       // (オプション) 件名用などに送る
+    })
   })
   .then(response => {
-    // GASからの戻り値はCORSの関係で直接読めない場合が多いですが、
-    // ここに来れば一応リクエストは飛んでいます。
-    alert("データを送信しました！Gmailを確認してください。");
+    alert(`送信完了！\nID: ${subjectId}\nファイル名: ${dynamicFileName}`);
     btn.innerText = "送信完了";
-    // 3秒後にボタンを戻す
     setTimeout(() => {
       btn.disabled = false;
       btn.innerText = "Gmailに送信";
@@ -265,14 +283,14 @@ function sendCSVToGmail() {
   })
   .catch(error => {
     console.error('Error:', error);
-    alert("送信に失敗しました。");
+    alert("送信失敗");
     btn.disabled = false;
     btn.innerText = "Gmailに送信";
   });
 }
 
 // ==========================================
-// シーケンス制御
+// シーケンス制御 (変更なし)
 // ==========================================
 function startSequence() {
   isPlaying = true;
