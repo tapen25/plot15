@@ -3,14 +3,20 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Data Logger (Muffled & Log Scale)</title>
+<title>Data Logger (ID ver)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
 <style>
   body { font-family: sans-serif; padding: 20px; text-align: center; background: #f0f0f0; transition: background 0.5s; }
+  
+  /* 入力欄のスタイル */
   input[type="text"] { padding: 10px; font-size: 1.2em; width: 200px; text-align: center; border-radius: 5px; border: 1px solid #ccc; margin-bottom: 10px; }
+  
   button { padding: 15px 30px; font-size: 1.2em; cursor: pointer; border: none; background: #333; color: white; border-radius: 8px; margin: 10px; }
+  
+  /* 送信ボタン：最初は非表示 */
   button#send-btn { background: #4CAF50; display: none; } 
   button:disabled { background: #999; cursor: not-allowed; }
+
   #status, #debug, #counter-display { margin: 15px 0; font-size: 1.2em; }
   #debug { color: #666; font-size: 0.9em; }
   #counter-display { font-weight: bold; color: #d32f2f; }
@@ -28,19 +34,16 @@
 
 <div id="status">停止中</div>
 <div id="debug">Wait...</div>
-<div id="counter-display">探索行動回数: 0</div>
 
 <script>
 const GAS_URL = "https://script.google.com/macros/s/AKfycbxGAOkqkvLAykyJbOldYCZ2qeAh-RpO5i9Mxd0qpktd6pP1246Zu7S4XwJit3KAUSU/exec";
 
 // ==========================================
-// 1. シンセ定義 (音色の調整)
+// 1. シンセ定義 (変更なし)
 // ==========================================
-// ★変更点: rolloffを-24にして切れ味を鋭く、初期値を100Hzにしてより「こもらせる」
 const globalFilter = new Tone.Filter({
   type: "lowpass",
   frequency: 100, 
-  rolloff: -24,   // -12, -24, -48, -96 などが設定可能。数字が大きいほど急峻にカット
   Q: 1 
 }).toDestination();
 
@@ -61,7 +64,7 @@ const bassSynth = new Tone.MonoSynth({
   envelope: { attack: 0.1, decay: 0.5, sustain: 0.8, release: 1 }, 
   filterEnvelope: { attack: 0.1, baseFrequency: 200, octaves: 1, exponent: 2 },
   volume: -100 
-}).toDestination(); // Bassはこもらせたくない場合、このままDestinationへ直結でOK
+}).toDestination();
 
 // ==========================================
 // 変数・設定
@@ -103,12 +106,14 @@ function noteToFreq(note) {
 }
 
 document.getElementById("start").onclick = async () => {
+  // ★追加: ID入力チェック
   const subjectIdInput = document.getElementById("subject-id");
   const subjectId = subjectIdInput.value.trim();
   if (!subjectId) {
     alert("被験者IDを入力してください！");
     return;
   }
+  // ★追加: 入力欄をロック（途中変更防止）
   subjectIdInput.disabled = true;
 
   if (typeof DeviceMotionEvent.requestPermission === 'function') {
@@ -135,7 +140,7 @@ document.getElementById("start").onclick = async () => {
 document.getElementById("send-btn").onclick = sendCSVToGmail;
 
 // ==========================================
-// 計算・制御
+// 計算・制御 (変更なし)
 // ==========================================
 
 function computeMeanStd(arr) {
@@ -199,24 +204,21 @@ function updateLoop() {
   });
 }
 
-// 質問2への回答: ここで 90-120 の範囲制限が行われています
 function mapStdToBPM(std) {
   let bpm = 90 + (std * 4); 
-  if (bpm < 90) bpm = 90;   // 下限
-  if (bpm > 120) bpm = 120; // 上限
+  if (bpm < 90) bpm = 90;
+  if (bpm > 120) bpm = 120;
   return bpm;
 }
 
 function updateFilterAndVol(std) {
-  // 質問1への回答: 初期値を100Hzに下げてよりこもった音からスタート
   const minFreq = 100;   
-  const maxFreq = 1200;   
+  const maxFreq = 4000;   
   const sensitivity = 15.0; 
 
   let ratio = std / sensitivity;
   if (ratio > 1.0) ratio = 1.0;
 
-  // 質問3への回答: この式は対数スケール（人間の聴覚特性に適合）になっています
   let targetFreq = minFreq * Math.pow(maxFreq / minFreq, ratio);
   globalFilter.frequency.rampTo(targetFreq, RAMP_TIME);
 
@@ -236,13 +238,14 @@ function updateFilterAndVol(std) {
 }
 
 // ==========================================
-// Gmail送信機能 (GAS連携)
+// Gmail送信機能 (GAS連携) ★修正あり
 // ==========================================
 function sendCSVToGmail() {
   if (logData.length === 0) {
     alert("データがありません。");
     return;
   }
+  // ★追加: IDの取得
   const subjectId = document.getElementById("subject-id").value.trim() || "NoID";
 
   if (GAS_URL.includes("xxxxxxxxxxxxxxxxx")) {
@@ -259,14 +262,15 @@ function sendCSVToGmail() {
     csvContent += `${row.time},${row.std},${row.bpm},${row.isMoving},${row.switchCount}\n`;
   });
 
+  // ★変更: ファイル名を動的に生成して送信パラメータに追加
   const dynamicFileName = `Data_${subjectId}_${new Date().toISOString().slice(0,10)}.csv`;
 
   fetch(GAS_URL, {
     method: 'POST',
     body: JSON.stringify({ 
       csvData: csvContent,
-      fileName: dynamicFileName, 
-      subjectId: subjectId       
+      fileName: dynamicFileName, // GAS側でこれを受け取る必要があります
+      subjectId: subjectId       // (オプション) 件名用などに送る
     })
   })
   .then(response => {
@@ -286,7 +290,7 @@ function sendCSVToGmail() {
 }
 
 // ==========================================
-// シーケンス制御
+// シーケンス制御 (変更なし)
 // ==========================================
 function startSequence() {
   isPlaying = true;
@@ -330,7 +334,7 @@ function finishSequence() {
   isPlaying = false;
   usePatternA = !usePatternA; 
   document.getElementById("status").innerText = "待機中...";
-  globalFilter.frequency.rampTo(100, 5); // 停止時も100Hzに戻す
+  globalFilter.frequency.rampTo(100, 5);
   kickSynth.volume.rampTo(-100, 5);
   bassSynth.volume.rampTo(-100, 5);
   targetBPM = 90;
