@@ -3,14 +3,20 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Data Logger (Fixed Melody Vol)</title>
+<title>Data Logger (ID ver)</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
 <style>
   body { font-family: sans-serif; padding: 20px; text-align: center; background: #f0f0f0; transition: background 0.5s; }
+  
+  /* 入力欄のスタイル */
   input[type="text"] { padding: 10px; font-size: 1.2em; width: 200px; text-align: center; border-radius: 5px; border: 1px solid #ccc; margin-bottom: 10px; }
+  
   button { padding: 15px 30px; font-size: 1.2em; cursor: pointer; border: none; background: #333; color: white; border-radius: 8px; margin: 10px; }
+  
+  /* 送信ボタン：最初は非表示 */
   button#send-btn { background: #4CAF50; display: none; } 
   button:disabled { background: #999; cursor: not-allowed; }
+
   #status, #debug, #counter-display { margin: 15px 0; font-size: 1.2em; }
   #debug { color: #666; font-size: 0.9em; }
   #counter-display { font-weight: bold; color: #d32f2f; }
@@ -33,45 +39,31 @@
 const GAS_URL = "https://script.google.com/macros/s/AKfycbxGAOkqkvLAykyJbOldYCZ2qeAh-RpO5i9Mxd0qpktd6pP1246Zu7S4XwJit3KAUSU/exec";
 
 // ==========================================
-// 1. シンセ・フィルター定義
+// 1. シンセ定義 (変更なし)
 // ==========================================
-
-// ドラム・ベース用フィルター（これまで通り：低域まで下がる）
-const kickFilter = new Tone.Filter({
+const globalFilter = new Tone.Filter({
   type: "lowpass",
   frequency: 100, 
   Q: 1 
 }).toDestination();
 
-// ★追加：メロディ専用フィルター
-// 最低周波数を高く設定し、閉じた状態でも音量が小さくなりすぎないようにする
-const melodyFilter = new Tone.Filter({
-  type: "lowpass",
-  frequency: 800, // ここを100ではなく800にすることで、最初から音が聞こえる
-  Q: 1
-}).toDestination();
-
-// メロディ：専用フィルターに接続
 const polySynth = new Tone.PolySynth(Tone.Synth, {
   oscillator: { type: "sawtooth" },
   envelope: { attack: 0.1, decay: 0.2, sustain: 0.5, release: 1 },
-  volume: -5 // 音量は固定
-}).connect(melodyFilter);
+  volume: -5
+}).connect(globalFilter);
 
-// Kick：ドラム用フィルターに接続
 const kickSynth = new Tone.MonoSynth({
   oscillator: { type: "sawtooth" }, 
   envelope: { attack: 0.01, decay: 0.2, sustain: 0, release: 0.2 }, 
-  volume: -100 // 初期値は無音（レイヤー変化用）
-}).connect(kickFilter);
+  volume: -100 
+}).connect(globalFilter);
 
-// Bass：直接出力（またはフィルター接続）
-// ベースはレイヤー変化として扱うため、音量制御のみに任せる形にします
 const bassSynth = new Tone.MonoSynth({
   oscillator: { type: "triangle" }, 
   envelope: { attack: 0.1, decay: 0.5, sustain: 0.8, release: 1 }, 
   filterEnvelope: { attack: 0.1, baseFrequency: 200, octaves: 1, exponent: 2 },
-  volume: -100 // 初期値は無音（レイヤー変化用）
+  volume: -100 
 }).toDestination();
 
 // ==========================================
@@ -98,6 +90,7 @@ const bassMap = { 0: "C3", 2: "E3", 4: "G3", 8: "C4" };
 let logData = [];           
 let startTime = 0;          
 let currentStd = 0;         
+
 let exploratoryActionCount = 0; 
 let isUserMoving = false;       
 const MOVE_THRESHOLD = 2.0;     
@@ -113,12 +106,14 @@ function noteToFreq(note) {
 }
 
 document.getElementById("start").onclick = async () => {
+  // ★追加: ID入力チェック
   const subjectIdInput = document.getElementById("subject-id");
   const subjectId = subjectIdInput.value.trim();
   if (!subjectId) {
     alert("被験者IDを入力してください！");
     return;
   }
+  // ★追加: 入力欄をロック（途中変更防止）
   subjectIdInput.disabled = true;
 
   if (typeof DeviceMotionEvent.requestPermission === 'function') {
@@ -145,8 +140,9 @@ document.getElementById("start").onclick = async () => {
 document.getElementById("send-btn").onclick = sendCSVToGmail;
 
 // ==========================================
-// 計算・制御
+// 計算・制御 (変更なし)
 // ==========================================
+
 function computeMeanStd(arr) {
   const n = arr.length;
   if (n === 0) return { mean: 0, std: 0 };
@@ -159,6 +155,7 @@ function computeMeanStd(arr) {
 function handleMotion(e) {
   const acc = e.accelerationIncludingGravity;
   if (!acc) return;
+
   const mag = Math.sqrt(acc.x**2 + acc.y**2 + acc.z**2);
   const now = performance.now();
 
@@ -214,28 +211,17 @@ function mapStdToBPM(std) {
   return bpm;
 }
 
-// ★修正: メロディはフィルター変化のみ、ドラム/ベースは音量変化（レイヤー）
 function updateFilterAndVol(std) {
+  const minFreq = 100;   
+  const maxFreq = 2000;   
   const sensitivity = 15.0; 
+
   let ratio = std / sensitivity;
   if (ratio > 1.0) ratio = 1.0;
 
-  // 1. メロディ用フィルター制御 (Melody)
-  // Min: 800Hz (こもっているが聞こえる) -> Max: 5000Hz (明るい)
-  const minMelodyFreq = 800; 
-  const maxMelodyFreq = 5000;
-  let melodyFreq = minMelodyFreq * Math.pow(maxMelodyFreq / minMelodyFreq, ratio);
-  melodyFilter.frequency.rampTo(melodyFreq, RAMP_TIME);
+  let targetFreq = minFreq * Math.pow(maxFreq / minFreq, ratio);
+  globalFilter.frequency.rampTo(targetFreq, RAMP_TIME);
 
-  // 2. キック用フィルター制御 (Kick)
-  // Min: 100Hz (すごくこもる) -> Max: 4000Hz
-  const minKickFreq = 100;
-  const maxKickFreq = 4000;
-  let kickFreq = minKickFreq * Math.pow(maxKickFreq / minKickFreq, ratio);
-  kickFilter.frequency.rampTo(kickFreq, RAMP_TIME);
-
-  // 3. ドラムとベースの音量制御（レイヤー変化：動きに応じて音量が変わる）
-  // ここは元のロジックに戻しました
   let kickVol = -90; 
   if (std > 2.0) {
     kickVol = -20 + (std - 2) * 4; 
@@ -252,14 +238,16 @@ function updateFilterAndVol(std) {
 }
 
 // ==========================================
-// Gmail送信機能
+// Gmail送信機能 (GAS連携) ★修正あり
 // ==========================================
 function sendCSVToGmail() {
   if (logData.length === 0) {
     alert("データがありません。");
     return;
   }
+  // ★追加: IDの取得
   const subjectId = document.getElementById("subject-id").value.trim() || "NoID";
+
   if (GAS_URL.includes("xxxxxxxxxxxxxxxxx")) {
     alert("GAS_URLを設定してください");
     return;
@@ -274,14 +262,15 @@ function sendCSVToGmail() {
     csvContent += `${row.time},${row.std},${row.bpm},${row.isMoving},${row.switchCount}\n`;
   });
 
+  // ★変更: ファイル名を動的に生成して送信パラメータに追加
   const dynamicFileName = `Data_${subjectId}_${new Date().toISOString().slice(0,10)}.csv`;
 
   fetch(GAS_URL, {
     method: 'POST',
     body: JSON.stringify({ 
       csvData: csvContent,
-      fileName: dynamicFileName, 
-      subjectId: subjectId       
+      fileName: dynamicFileName, // GAS側でこれを受け取る必要があります
+      subjectId: subjectId       // (オプション) 件名用などに送る
     })
   })
   .then(response => {
@@ -301,7 +290,7 @@ function sendCSVToGmail() {
 }
 
 // ==========================================
-// シーケンス制御
+// シーケンス制御 (変更なし)
 // ==========================================
 function startSequence() {
   isPlaying = true;
@@ -341,15 +330,11 @@ function playNextNote() {
   }, noteTimeLen * 1000); 
 }
 
-// 停止時はすべてフェードアウトさせる（仕様通り）
 function finishSequence() {
   isPlaying = false;
   usePatternA = !usePatternA; 
   document.getElementById("status").innerText = "待機中...";
-  
-  // フィルターと音量をリセット
-  kickFilter.frequency.rampTo(100, 5);
-  melodyFilter.frequency.rampTo(800, 5); // メロディも初期位置へ
+  globalFilter.frequency.rampTo(100, 5);
   kickSynth.volume.rampTo(-100, 5);
   bassSynth.volume.rampTo(-100, 5);
   targetBPM = 90;
@@ -358,3 +343,4 @@ function finishSequence() {
 
 </body>
 </html>
+
